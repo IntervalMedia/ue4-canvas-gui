@@ -2,11 +2,19 @@
  * Mobile Menu Example for UE4 Canvas GUI
  * Demonstrates touch-based menu implementation for Android and iOS
  * 
+ * IMPORTANT: This framework is designed to be used as a DYNAMIC LIBRARY
+ * INJECTED AT RUNTIME into a production UE4 application.
+ * 
+ * This means:
+ * - We CANNOT use UE4 API functions directly (no compile-time access)
+ * - We MUST use function hooking to intercept UE4 functions at runtime
+ * - OR use native iOS/Android APIs for touch input
+ * 
  * This example shows:
  * - PostRender hook integration with mobile hooking frameworks
- * - Touch input handling for menu interactions
+ * - Native touch input handling (iOS UIGestureRecognizer, Android MotionEvent)
  * - Simple menu with tabs, buttons, sliders, and checkboxes
- * - Platform-specific compilation
+ * - Platform-specific compilation and initialization
  */
 
 #include "PlatformDefines.h"
@@ -18,15 +26,23 @@
     #include "ZeroInput.h"
 #endif
 
-// Include the main ZeroGUI header
-// Note: On mobile, this should be a modified version without Windows.h dependencies
-// For now, we'll work with the assumption that ZeroGUI.h has been updated
-// #include "ZeroGUI.h"
-
-// Forward declarations for UE4 types
+// Forward declarations for UE4 types (we don't include UE4 headers)
+// These are only used as opaque pointers passed to hooked functions
 class UGameViewportClient;
 class UCanvas;
-struct FVector2D;
+
+// FVector2D is a simple struct we can define ourselves
+#ifndef FVECTOR2D_DEFINED
+#define FVECTOR2D_DEFINED
+struct FVector2D
+{
+    float X;
+    float Y;
+    
+    FVector2D() : X(0.0f), Y(0.0f) {}
+    FVector2D(float InX, float InY) : X(InX), Y(InY) {}
+};
+#endif
 
 namespace MobileMenu
 {
@@ -174,20 +190,152 @@ void HookedPostRender(UGameViewportClient* viewport, UCanvas* canvas)
 // Platform-specific initialization
 #if PLATFORM_IOS
 
+// iOS Native Touch Input Handler
+// This uses Objective-C to interface with UIKit's touch system
+#ifdef __OBJC__
+#import <UIKit/UIKit.h>
+
+@interface TouchInputHandler : NSObject
+@end
+
+@implementation TouchInputHandler
+
+// Override touch handling methods
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    int touchIndex = 0;
+    for (UITouch* touch in touches)
+    {
+        if (touchIndex >= 10) break;
+        
+        CGPoint location = [touch locationInView:touch.view];
+        ZeroGUI::Input::UpdateTouchState(touchIndex, 
+            FVector2D(location.x, location.y), true);
+        touchIndex++;
+    }
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    int touchIndex = 0;
+    for (UITouch* touch in touches)
+    {
+        if (touchIndex >= 10) break;
+        
+        CGPoint location = [touch locationInView:touch.view];
+        // Only update if this touch is already active
+        if (ZeroGUI::Input::IsTouchActive(touchIndex))
+        {
+            ZeroGUI::Input::UpdateTouchState(touchIndex, 
+                FVector2D(location.x, location.y), true);
+        }
+        touchIndex++;
+    }
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    int touchIndex = 0;
+    for (UITouch* touch in touches)
+    {
+        if (touchIndex >= 10) break;
+        
+        CGPoint location = [touch locationInView:touch.view];
+        ZeroGUI::Input::UpdateTouchState(touchIndex, 
+            FVector2D(location.x, location.y), false);
+        touchIndex++;
+    }
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    // Clear all touches on cancel
+    ZeroGUI::Input::ClearTouchStates();
+}
+
+@end
+
+// Static instance of our touch handler
+static TouchInputHandler* g_TouchHandler = nil;
+
+#endif // __OBJC__
+
 extern "C" void InitializeMobileGUI()
 {
     // iOS initialization
     MobileHooks::Initialize();
+    
+    #ifdef __OBJC__
+    // Create and setup native touch handler
+    g_TouchHandler = [[TouchInputHandler alloc] init];
+    
+    // Get the main view and add our touch handler
+    UIView* mainView = iOSNativeTouch::GetMainView();
+    if (mainView)
+    {
+        // Swizzle touch methods to intercept touches
+        // This allows us to capture touches without UE4 API access
+        Method original = class_getInstanceMethod([mainView class], @selector(touchesBegan:withEvent:));
+        Method custom = class_getInstanceMethod([TouchInputHandler class], @selector(touchesBegan:withEvent:));
+        method_exchangeImplementations(original, custom);
+        
+        // Repeat for other touch methods
+        original = class_getInstanceMethod([mainView class], @selector(touchesMoved:withEvent:));
+        custom = class_getInstanceMethod([TouchInputHandler class], @selector(touchesMoved:withEvent:));
+        method_exchangeImplementations(original, custom);
+        
+        original = class_getInstanceMethod([mainView class], @selector(touchesEnded:withEvent:));
+        custom = class_getInstanceMethod([TouchInputHandler class], @selector(touchesEnded:withEvent:));
+        method_exchangeImplementations(original, custom);
+    }
+    #endif
 }
 
 #elif PLATFORM_ANDROID
 
 #include <jni.h>
+#include <android/input.h>
+
+// Android Native Touch Input Handler via JNI
+// This intercepts touch events from Android's native input system
+extern "C" JNIEXPORT void JNICALL
+Java_com_epicgames_ue4_GameActivity_nativeTouchEvent(
+    JNIEnv* env, jobject thiz, 
+    jint action, jint pointerIndex, jfloat x, jfloat y)
+{
+    // Android MotionEvent actions
+    const int ACTION_DOWN = 0;
+    const int ACTION_UP = 1;
+    const int ACTION_MOVE = 2;
+    const int ACTION_CANCEL = 3;
+    
+    bool isDown = false;
+    if (action == ACTION_DOWN || action == ACTION_MOVE)
+    {
+        isDown = true;
+    }
+    else if (action == ACTION_UP || action == ACTION_CANCEL)
+    {
+        isDown = false;
+    }
+    
+    if (pointerIndex < 10)
+    {
+        ZeroGUI::Input::UpdateTouchState(pointerIndex, FVector2D(x, y), isDown);
+    }
+}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_yourgame_MobileGUI_initialize(JNIEnv* env, jobject thiz)
 {
-    // Android initialization
+    // Android initialization via JNI
+    JavaVM* vm;
+    env->GetJavaVM(&vm);
+    
+    // Initialize native touch system
+    AndroidNativeTouch::Initialize(vm, thiz);
+    
+    // Initialize hooks
     MobileHooks::Initialize();
 }
 
@@ -202,42 +350,77 @@ extern "C" void InitializeMobileGUI()
 /*
  * Integration Guide:
  * 
- * 1. Include this file in your UE4 mobile project
- * 2. Call InitializeMobileGUI() when your game/app starts
- * 3. The hook will automatically intercept PostRender calls
- * 4. Touch input should be fed to ZeroGUI::Input::UpdateTouchState()
- *    from your player controller's touch event handlers
+ * IMPORTANT: This is a RUNTIME-INJECTED DYNAMIC LIBRARY
  * 
- * Example touch event handling in your PlayerController:
+ * This framework is designed to be injected at runtime into a production UE4 game.
+ * Therefore, we CANNOT use UE4 API functions directly.
  * 
- * void AYourPlayerController::SetupInputComponent()
- * {
- *     Super::SetupInputComponent();
- *     
- *     InputComponent->BindTouch(IE_Pressed, this, &AYourPlayerController::OnTouchPressed);
- *     InputComponent->BindTouch(IE_Released, this, &AYourPlayerController::OnTouchReleased);
- *     InputComponent->BindTouch(IE_Repeat, this, &AYourPlayerController::OnTouchMoved);
- * }
+ * Integration Steps:
  * 
- * void AYourPlayerController::OnTouchPressed(ETouchIndex::Type FingerIndex, FVector Location)
- * {
- *     FVector2D screenPos = FVector2D(Location.X, Location.Y);
- *     ZeroGUI::Input::UpdateTouchState((int)FingerIndex, screenPos, true);
- * }
+ * 1. Build this library as a dynamic library (.dylib for iOS, .so for Android)
+ * 2. Inject it into the running UE4 application at runtime
+ * 3. Call InitializeMobileGUI() to install hooks and setup touch input
+ * 4. The framework will automatically:
+ *    - Hook into PostRender for drawing
+ *    - Capture native touch input (iOS: UITouch, Android: MotionEvent)
+ *    - Process gestures and render the GUI
  * 
- * void AYourPlayerController::OnTouchReleased(ETouchIndex::Type FingerIndex, FVector Location)
- * {
- *     FVector2D screenPos = FVector2D(Location.X, Location.Y);
- *     ZeroGUI::Input::UpdateTouchState((int)FingerIndex, screenPos, false);
- * }
+ * iOS Integration:
+ * ---------------
+ * The library uses:
+ * - CydiaSubstrate to hook PostRender function
+ * - Objective-C method swizzling to intercept UITouch events
+ * - Native UIKit APIs (no UE4 API dependency)
  * 
- * Building:
+ * Build as:
+ *   clang++ -shared -framework UIKit -framework Foundation \
+ *           -lsubstrate -o MobileGUI.dylib *.cpp *.mm
+ * 
+ * Inject using:
+ *   DYLD_INSERT_LIBRARIES=MobileGUI.dylib ./YourUE4Game
+ * 
+ * Android Integration:
+ * -------------------
+ * The library uses:
+ * - Dobby hooking framework to hook PostRender
+ * - JNI to intercept Android MotionEvent touch events
+ * - Native Android APIs (no UE4 API dependency)
+ * 
+ * Build as:
+ *   ${ANDROID_NDK}/ndk-build
+ * 
+ * Inject using:
+ *   - Modify APK to include the .so in lib/
+ *   - Use LD_PRELOAD on rooted devices
+ *   - Or integrate into build if you have source access
+ * 
+ * Alternative: Hook UE4 Touch Input Functions
+ * -------------------------------------------
+ * If you prefer to hook UE4's touch input processing instead of using
+ * native APIs, you can hook these functions:
  * 
  * iOS:
- * - Link against CydiaSubstrate framework
- * - Ensure substrate.h is in include path
+ *   - UE4's FIOSInputInterface::HandleTouchEvent
+ *   - Or APlayerController::InputTouch
  * 
  * Android:
- * - Include Dobby hooking library in your project
- * - Add to CMakeLists.txt or Android.mk
+ *   - UE4's FAndroidInputInterface::TouchEvent
+ *   - Or APlayerController::InputTouch
+ * 
+ * This requires finding the correct symbol names for your UE4 version.
+ * 
+ * NO LONGER VALID - DO NOT USE:
+ * ----------------------------
+ * The following UE4 API usage patterns will NOT work in a runtime-injected library:
+ * 
+ * ❌ APlayerController::SetupInputComponent() - Cannot subclass at runtime
+ * ❌ InputComponent->BindTouch() - No access to InputComponent
+ * ❌ Super::SetupInputComponent() - Cannot call parent functions
+ * ❌ Any UE4 class methods that require compile-time binding
+ * 
+ * Instead, use:
+ * ✅ Native iOS UITouch events (via method swizzling)
+ * ✅ Native Android MotionEvent (via JNI)
+ * ✅ Hooking UE4 internal touch processing functions
+ * ✅ Function hooking for PostRender and other engine callbacks
  */

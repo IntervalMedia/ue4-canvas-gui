@@ -90,18 +90,25 @@ namespace ZeroGUI
 			return false;
 		}
 
-		// Main input handler - to be called from game code with touch data
-		// This should be called with touch events from UE4's touch input system
+		// Main input handler - processes touch state updates
+		// This is called each frame to process accumulated touch events
+		// Touch events are fed via UpdateTouchState() which can be called from:
+		// 1. Native iOS gesture recognizers (see MobileHooks.h)
+		// 2. Native Android touch event handlers (see MobileHooks.h)
+		// 3. Hooked UE4 touch input functions (advanced usage)
 		void Handle()
 		{
-			// This is a placeholder - actual implementation should receive touch data
-			// from UE4's player controller touch events
-			// Example integration:
-			// APlayerController* PC = GetPlayerController();
-			// PC->GetInputTouchState(ETouchIndex::Touch1, x, y, isDown);
+			// Process any queued touch events
+			// This function is called each frame from the PostRender hook
+			// No UE4 API calls needed - all state is managed via UpdateTouchState()
 		}
 
-		// Update touch state - called from game code
+		// Update touch state - called from native touch handlers or hooked functions
+		// This is the primary interface for feeding touch data into the GUI system
+		// 
+		// For iOS: Called from UITouch event handlers in native code
+		// For Android: Called from MotionEvent handlers in JNI code
+		// For UE4 hooking: Called from hooked input processing functions
 		void UpdateTouchState(int touchIndex, FVector2D position, bool isDown)
 		{
 			if (touchIndex >= 10) return;
