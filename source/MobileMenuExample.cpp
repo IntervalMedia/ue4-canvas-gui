@@ -269,7 +269,15 @@ extern "C" void InitializeMobileGUI()
     // Create and setup native touch handler
     g_TouchHandler = [[TouchInputHandler alloc] init];
     
-    // Get the main view and add our touch handler
+    // Get the main view and swizzle touch methods
+    // IMPORTANT: Method swizzling affects ALL instances of the view class globally.
+    // This means our touch handler will intercept touches for the entire UIView hierarchy.
+    // This is intentional - we want to capture all touches before UE4 processes them.
+    // Side effect: May interfere with UE4's native touch handling.
+    // If conflicts occur, consider:
+    // 1. Only swizzle the root game view (more targeted)
+    // 2. Check if touch is within GUI bounds before processing
+    // 3. Always call the original implementation to maintain UE4 functionality
     UIView* mainView = iOSNativeTouch::GetMainView();
     if (mainView)
     {

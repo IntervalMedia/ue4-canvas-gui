@@ -207,7 +207,8 @@ void PostRenderHook(UGameViewportClient* viewport, UCanvas* canvas)
 2. **Build Command**
    ```bash
    # Compile as dynamic library (.dylib)
-   clang++ -std=c++11 -stdlib=libc++ \
+   # Using C++17 for consistency with Android builds
+   clang++ -std=c++17 -stdlib=libc++ \
            -shared -fPIC \
            -framework UIKit -framework Foundation \
            -lsubstrate \

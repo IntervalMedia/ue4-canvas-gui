@@ -52,19 +52,17 @@
     namespace iOSNativeTouch
     {
         // Setup native iOS gesture recognizers on the main UIView
+        // Note: We don't actually use gesture recognizers for touch tracking,
+        // but we need to enable multi-touch on the view
         void SetupNativeGestureRecognizers(UIView* mainView)
         {
-            // Add tap gesture recognizer for touch tracking
-            UITapGestureRecognizer* tapGesture = [[UITapGestureRecognizer alloc] 
-                initWithTarget:nil action:nil];
-            tapGesture.cancelsTouchesInView = NO;
-            [mainView addGestureRecognizer:tapGesture];
-            
-            // Enable multi-touch
+            // Enable multi-touch support on the main view
+            // This allows us to receive multiple simultaneous touch events
             mainView.multipleTouchEnabled = YES;
+            mainView.userInteractionEnabled = YES;
             
-            // Touch handling will be done via touch events on the view
-            // which are automatically forwarded to our hooked functions
+            // Touch handling will be done via method swizzling of touch methods
+            // rather than using gesture recognizers (more direct control)
         }
         
         // Get the main UIView from the UE4 window

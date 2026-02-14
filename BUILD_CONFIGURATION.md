@@ -98,20 +98,20 @@ SUBSTRATE_PATH="/path/to/substrate"  # CydiaSubstrate SDK location
 SOURCE_DIR="./source"
 OUTPUT="MobileGUI.dylib"
 
-# Compiler flags
-CFLAGS="-std=c++17 -stdlib=libc++ -fPIC -shared"
-CFLAGS="$CFLAGS -arch $ARCH"
-CFLAGS="$CFLAGS -miphoneos-version-min=$MIN_VERSION"
-CFLAGS="$CFLAGS -isysroot $(xcrun --sdk $SDK --show-sdk-path)"
-CFLAGS="$CFLAGS -DPLATFORM_IOS=1 -DPLATFORM_MOBILE=1"
-CFLAGS="$CFLAGS -I$SUBSTRATE_PATH/include"
+# C++ compiler flags (using C++17 for consistency)
+CXXFLAGS="-std=c++17 -stdlib=libc++ -fPIC -shared"
+CXXFLAGS="$CXXFLAGS -arch $ARCH"
+CXXFLAGS="$CXXFLAGS -miphoneos-version-min=$MIN_VERSION"
+CXXFLAGS="$CXXFLAGS -isysroot $(xcrun --sdk $SDK --show-sdk-path)"
+CXXFLAGS="$CXXFLAGS -DPLATFORM_IOS=1 -DPLATFORM_MOBILE=1"
+CXXFLAGS="$CXXFLAGS -I$SUBSTRATE_PATH/include"
 
 # Frameworks and libraries
 FRAMEWORKS="-framework Foundation -framework UIKit"
 LIBS="-L$SUBSTRATE_PATH/lib -lsubstrate"
 
-# Objective-C++ files (for UITouch handling)
-OBJCPP_FLAGS="-x objective-c++ $CFLAGS"
+# Objective-C++ flags
+OBJCPP_FLAGS="-x objective-c++ $CXXFLAGS"
 
 # Compile
 echo "Building iOS dynamic library..."
@@ -140,12 +140,12 @@ SDK = iphoneos
 ARCH = arm64
 MIN_VERSION = 12.0
 
-CC = clang++
-CFLAGS = -std=c++17 -stdlib=libc++ -fPIC -shared -arch $(ARCH)
-CFLAGS += -miphoneos-version-min=$(MIN_VERSION)
-CFLAGS += -isysroot $(shell xcrun --sdk $(SDK) --show-sdk-path)
-CFLAGS += -DPLATFORM_IOS=1 -DPLATFORM_MOBILE=1
-CFLAGS += -I/path/to/substrate/include
+CXX = clang++
+CXXFLAGS = -std=c++17 -stdlib=libc++ -fPIC -shared -arch $(ARCH)
+CXXFLAGS += -miphoneos-version-min=$(MIN_VERSION)
+CXXFLAGS += -isysroot $(shell xcrun --sdk $(SDK) --show-sdk-path)
+CXXFLAGS += -DPLATFORM_IOS=1 -DPLATFORM_MOBILE=1
+CXXFLAGS += -I/path/to/substrate/include
 
 LDFLAGS = -framework Foundation -framework UIKit
 LDFLAGS += -L/path/to/substrate/lib -lsubstrate
@@ -156,11 +156,11 @@ OBJECTS = $(SOURCES:.cpp=.o)
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) $(OBJECTS) $(LDFLAGS) -o $@
+	$(CXX) $(CXXFLAGS) $(OBJECTS) $(LDFLAGS) -o $@
 	codesign -s "-" $@
 
 %.o: %.cpp
-	$(CC) -x objective-c++ $(CFLAGS) -c $< -o $@
+	$(CXX) -x objective-c++ $(CXXFLAGS) -c $< -o $@
 
 clean:
 	rm -f $(OBJECTS) $(TARGET)
