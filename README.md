@@ -28,6 +28,8 @@ Ingame render
 
 ## 🚀 NEW: Mobile Platform Support (iOS & Android)
 
+**IMPORTANT:** This framework is designed as a **runtime-injected dynamic library** for production UE4 applications.
+
 This GUI now supports mobile devices with touch input! See the dedicated mobile documentation:
 
 - **[Mobile Integration Guide](MOBILE_INTEGRATION.md)** - Complete guide for iOS and Android
@@ -39,29 +41,53 @@ This GUI now supports mobile devices with touch input! See the dedicated mobile 
 - ✅ Gesture-based menu controls (double-tap, swipe, etc.)
 - ✅ DPI-aware scaling for different screen sizes
 - ✅ Touch-friendly hit detection (20% larger hit areas)
+- ✅ **Native iOS touch handling** (UITouch via method swizzling - NO UE4 API dependency)
+- ✅ **Native Android touch handling** (MotionEvent via JNI - NO UE4 API dependency)
 - ✅ PostRender hooking via CydiaSubstrate (iOS) and Dobby (Android)
 - ✅ Complete example implementation included
+
+### Runtime Injection Model:
+
+This framework is built to be **injected at runtime** into production UE4 games:
+
+**✅ What this means:**
+- No UE4 source code required
+- No recompilation of the target game
+- Works with shipped/production UE4 applications
+- Uses function hooking to intercept engine callbacks
+- Uses native iOS/Android APIs for touch input
+
+**❌ What you CANNOT do:**
+- Cannot use UE4 API functions directly (APlayerController, InputComponent, etc.)
+- Cannot subclass UE4 classes at runtime
+- Cannot call UE4 methods that require compile-time binding
+
+**✅ What you SHOULD do:**
+- Use CydiaSubstrate (iOS) or Dobby (Android) to hook functions
+- Use native iOS UITouch or Android MotionEvent for input
+- Hook PostRender for drawing
+- Build as a dynamic library (.dylib or .so)
 
 ### Quick Mobile Example:
 
 ```cpp
+// Build as a dynamic library and inject at runtime
 #include "PlatformDefines.h"
 #include "MobileHooks.h"
 #include "ZeroInputMobile.h"
 
-void InitializeGame()
+// Entry point when library is loaded
+extern "C" void InitializeMobileGUI()
 {
     #if PLATFORM_MOBILE
-        MobileHooks::Initialize();  // Install PostRender hook
+        MobileHooks::Initialize();  // Installs PostRender hook + native touch handlers
     #endif
 }
 
-// Feed touch events from UE4
-void OnTouchPressed(ETouchIndex::Type FingerIndex, FVector Location)
-{
-    FVector2D screenPos = FVector2D(Location.X, Location.Y);
-    ZeroGUI::Input::UpdateTouchState((int)FingerIndex, screenPos, true);
-}
+// Touch input is handled automatically via:
+// - iOS: UITouch method swizzling
+// - Android: JNI MotionEvent interception
+// No UE4 PlayerController or InputComponent needed!
 ```
 
 See `source/MobileMenuExample.cpp` for a complete working example.

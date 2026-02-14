@@ -4,6 +4,30 @@
 
 Successfully ported UE4 Canvas GUI framework from desktop (Windows) to mobile platforms (iOS and Android) with full touch input support and platform-specific hooking frameworks.
 
+## CRITICAL: Runtime-Injected Dynamic Library Model
+
+**This framework is designed to be injected at runtime into production UE4 applications.**
+
+### Key Architectural Decisions:
+
+1. **Zero UE4 Dependencies**
+   - ❌ NO UE4 headers included
+   - ❌ NO linking against UE4 libraries
+   - ✅ Forward declarations for UE4 types (opaque pointers)
+   - ✅ Works with shipped/production UE4 binaries
+
+2. **Native OS APIs Over UE4 APIs**
+   - ✅ iOS: UIKit for touch handling (UITouch, method swizzling)
+   - ✅ Android: Android SDK for touch handling (MotionEvent, JNI)
+   - ✅ More stable across UE4 versions
+   - ✅ Earlier access to input events
+
+3. **Function Hooking for UE4 Interaction**
+   - ✅ iOS: CydiaSubstrate for hooking
+   - ✅ Android: Dobby for hooking
+   - ✅ Hook PostRender for drawing
+   - ✅ Optional: Hook UE4 touch functions as alternative to native APIs
+
 ## Implementation Summary
 
 ### Files Created (8 new files)
@@ -176,22 +200,70 @@ Successfully ported UE4 Canvas GUI framework from desktop (Windows) to mobile pl
 ## Integration Requirements
 
 ### iOS
-1. Add CydiaSubstrate framework
-2. Configure code signing
-3. Link substrate library
-4. Set platform macros
+1. Build as dynamic library (.dylib)
+2. Add CydiaSubstrate framework
+3. Configure code signing (ad-hoc for testing)
+4. Inject using DYLD_INSERT_LIBRARIES or similar
+5. Native touch handling via UIKit (automatic)
 
 ### Android
-1. Add Dobby hooking library
-2. Configure CMake or Android.mk
-3. Link dobby library (ARM64/ARMv7)
-4. Set platform macros
+1. Build as shared library (.so)
+2. Add Dobby hooking library
+3. Configure CMake or Android.mk
+4. Inject into APK or use LD_PRELOAD
+5. Add JNI touch handlers in Java (or use hooking)
 
-### UE4 Project
-1. Update Build.cs with mobile configuration
-2. Feed touch events to UpdateTouchState()
-3. Call MobileHooks::Initialize() on startup
-4. Use ZeroGUI as normal
+### Runtime Injection Methods
+
+**iOS:**
+- DYLD_INSERT_LIBRARIES (jailbroken)
+- App bundle modification (sideloading)
+- Frida injection (development)
+- CydiaSubstrate (jailbroken)
+
+**Android:**
+- APK modification (add to lib/)
+- LD_PRELOAD (rooted devices)
+- Xposed/Magisk modules
+- Frida injection (development)
+
+### ❌ What Does NOT Work (Common Misconceptions)
+
+**These approaches require compile-time UE4 access:**
+
+```cpp
+// ❌ WRONG - Cannot subclass UE4 classes at runtime
+class MyController : public APlayerController { ... }
+
+// ❌ WRONG - Cannot use InputComponent (no compile-time access)
+InputComponent->BindTouch(IE_Pressed, this, &AMyController::OnTouch);
+
+// ❌ WRONG - Cannot call Super functions
+Super::SetupInputComponent();
+
+// ❌ WRONG - Cannot include UE4 headers
+#include "GameFramework/PlayerController.h"
+#include "Components/InputComponent.h"
+
+// ❌ WRONG - Cannot link against UE4 libraries
+target_link_libraries(MyLib UE4)
+```
+
+**Instead, use runtime hooking and native APIs:**
+
+```cpp
+// ✅ CORRECT - Forward declarations only
+class UGameViewportClient;  // Opaque pointer
+class UCanvas;              // Opaque pointer
+
+// ✅ CORRECT - Hook functions at runtime
+MSHookFunction(PostRenderAddr, HookedPostRender, &originalPostRender);
+
+// ✅ CORRECT - Use native iOS/Android touch APIs
+@interface TouchHandler : NSObject
+- (void)touchesBegan:(NSSet<UITouch*>*)touches ...
+@end
+```
 
 ## Testing Recommendations
 
@@ -219,31 +291,68 @@ Successfully ported UE4 Canvas GUI framework from desktop (Windows) to mobile pl
 
 ## Migration Path
 
-For existing desktop projects:
+### For Developers Moving from Compile-Time Integration
 
-1. **No Changes Required for Desktop**
-   - Continue using ZeroInput.h and ZeroGUI.h
-   - No modifications needed
+**OLD Approach (Compile-Time Integration):**
+```cpp
+// In your UE4 project source code
+class AMyPlayerController : public APlayerController
+{
+    virtual void SetupInputComponent() override;
+    void OnTouchPressed(ETouchIndex::Type idx, FVector loc);
+};
 
-2. **To Add Mobile Support:**
-   ```cpp
-   #include "PlatformDefines.h"
-   #include "MobileHooks.h"
-   #if PLATFORM_MOBILE
-       #include "ZeroInputMobile.h"
-   #else
-       #include "ZeroInput.h"
-   #endif
-   ```
+void AMyPlayerController::SetupInputComponent()
+{
+    Super::SetupInputComponent();
+    InputComponent->BindTouch(IE_Pressed, this, &AMyPlayerController::OnTouchPressed);
+}
 
-3. **Feed Touch Events:**
-   ```cpp
-   void OnTouchPressed(ETouchIndex::Type idx, FVector Location)
-   {
-       ZeroGUI::Input::UpdateTouchState((int)idx, 
-           FVector2D(Location.X, Location.Y), true);
-   }
-   ```
+void AMyPlayerController::OnTouchPressed(ETouchIndex::Type idx, FVector loc)
+{
+    ZeroGUI::Input::UpdateTouchState((int)idx, FVector2D(loc.X, loc.Y), true);
+}
+```
+
+**NEW Approach (Runtime Injection):**
+```cpp
+// In your injected dynamic library - NO UE4 headers!
+#include "MobileHooks.h"
+#include "ZeroInputMobile.h"
+
+// iOS: Use native UITouch via method swizzling (automatic)
+#ifdef __OBJC__
+@implementation TouchInputHandler
+- (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event
+{
+    for (UITouch* touch in touches) {
+        CGPoint loc = [touch locationInView:touch.view];
+        ZeroGUI::Input::UpdateTouchState(0, FVector2D(loc.x, loc.y), true);
+    }
+}
+@end
+#endif
+
+// Android: Use JNI to intercept MotionEvent
+extern "C" JNIEXPORT void JNICALL
+Java_..._nativeTouchEvent(JNIEnv* env, jobject, jint action, jfloat x, jfloat y)
+{
+    bool isDown = (action == 0 || action == 2);  // ACTION_DOWN or ACTION_MOVE
+    ZeroGUI::Input::UpdateTouchState(0, FVector2D(x, y), isDown);
+}
+
+// Entry point
+extern "C" void InitializeMobileGUI()
+{
+    MobileHooks::Initialize();  // Installs hooks automatically
+}
+```
+
+**Key Differences:**
+1. ❌ No subclassing UE4 classes → ✅ Use native platform classes
+2. ❌ No UE4 InputComponent → ✅ Use native touch APIs
+3. ❌ No compile-time binding → ✅ Runtime function hooking
+4. ❌ Requires UE4 source → ✅ Works with binary-only games
 
 ## Known Limitations
 

@@ -4,12 +4,38 @@
 
 This document describes the architecture of the mobile port for UE4 Canvas GUI, explaining how the codebase has been adapted to support both desktop and mobile platforms.
 
+## CRITICAL: Runtime-Injected Dynamic Library Model
+
+**This framework is designed to be injected at runtime as a dynamic library into production UE4 applications.**
+
+This fundamentally changes how we interact with UE4:
+
+### What This Means:
+- ❌ **NO compile-time access to UE4 headers or classes**
+- ❌ **CANNOT use UE4 API functions directly** (APlayerController, InputComponent, etc.)
+- ❌ **CANNOT subclass UE4 classes** (no inheritance from APlayerController, AActor, etc.)
+- ✅ **MUST use function hooking** to intercept UE4 internal functions at runtime
+- ✅ **MUST use native OS APIs** (iOS UIKit, Android SDK) for platform functionality
+- ✅ **CAN access UE4 internals** via memory inspection and hooking
+
+### Key Architectural Differences:
+
+| Traditional Integration | Runtime Injection (This Framework) |
+|------------------------|-----------------------------------|
+| `#include <UE4Headers.h>` | No UE4 headers - use opaque pointers |
+| `class MyController : public APlayerController` | Cannot subclass - use hooking |
+| `InputComponent->BindTouch(...)` | Hook UE4's internal touch handler OR use native APIs |
+| Link against UE4 libraries | No linking - dynamic loading only |
+| Requires UE4 source/build | Works with shipped binary games |
+
 ## Design Principles
 
-1. **Minimal Changes**: The desktop version (ZeroGUI.h, ZeroInput.h) remains unchanged to maintain backward compatibility
-2. **Platform Abstraction**: New mobile files provide equivalent functionality without Windows dependencies
-3. **Compile-Time Selection**: Platform macros enable automatic selection of desktop vs. mobile code paths
-4. **Touch-First Design**: Mobile input handling designed around touch gestures rather than retrofitted mouse emulation
+1. **Zero UE4 Dependency**: The code compiles without any UE4 headers or libraries
+2. **Function Hooking First**: All UE4 interaction happens through runtime hooks
+3. **Native APIs Preferred**: Use iOS UIKit and Android SDK instead of UE4 when possible
+4. **Platform Abstraction**: New mobile files provide equivalent functionality without UE4 dependencies
+5. **Compile-Time Selection**: Platform macros enable automatic selection of desktop vs. mobile code paths
+6. **Touch-First Design**: Mobile input handling designed around touch gestures rather than retrofitted mouse emulation
 
 ## File Organization
 
@@ -253,7 +279,7 @@ void InstallPostRenderHook()
 ### Hook Installation Flow
 
 ```
-Game Start
+Library Loaded (via injection)
     │
     ▼
 InitializeMobileGUI()
@@ -261,12 +287,20 @@ InitializeMobileGUI()
     ▼
 MobileHooks::Initialize()
     │
-    ├─ Find PostRender symbol
-    ├─ Install hook
-    └─ Save original pointer
+    ├─ iOS:
+    │   ├─ MSFindSymbol() - Find PostRender address
+    │   ├─ MSHookFunction() - Install hook
+    │   ├─ iOSNativeTouch::Initialize() - Setup method swizzling
+    │   └─ Save original function pointer
+    │
+    └─ Android:
+        ├─ DobbySymbolResolver() - Find PostRender address
+        ├─ DobbyHook() - Install hook
+        ├─ AndroidNativeTouch::Initialize() - Setup JNI
+        └─ Save original function pointer
     │
     ▼
-Hook Active
+Hooks Active
     │
     └─ Every frame:
          UE4 calls PostRender()
@@ -275,9 +309,27 @@ Hook Active
          HookedPostRender() intercepts
             │
             ├─ Call originalPostRender()
-            ├─ Update touch input
+            ├─ Update touch input via Handle()
             ├─ Render GUI
             └─ Return to UE4
+```
+
+**No UE4 Linking Required:**
+```cpp
+// Forward declarations only - no UE4 headers needed
+class UGameViewportClient;  // Opaque pointer
+class UCanvas;              // Opaque pointer
+
+// We never access internals, just pass them through
+void HookedPostRender(UGameViewportClient* viewport, UCanvas* canvas)
+{
+    // Call original - we don't know what's inside these objects
+    if (originalPostRender)
+        originalPostRender(viewport, canvas);
+    
+    // Do our own rendering
+    // (If we need canvas functions, we'd hook those too)
+}
 ```
 
 ## Touch-Friendly Adaptations
@@ -338,39 +390,130 @@ Example DPI scales:
 
 ## Integration with UE4
 
-### Touch Event Flow
+### Runtime Injection Flow
 
 ```
-UE4 Touch Event
+Game Starts (UE4 Production Binary)
     │
     ▼
-APlayerController::SetupInputComponent()
-    │
-    ├─ BindTouch(IE_Pressed, OnTouchPressed)
-    ├─ BindTouch(IE_Released, OnTouchReleased)
-    └─ BindTouch(IE_Repeat, OnTouchMoved)
+Dynamic Library Injected
+(MobileGUI.dylib or libMobileGUI.so)
     │
     ▼
-OnTouch...() callbacks
+InitializeMobileGUI() called
     │
-    └─ ZeroGUI::Input::UpdateTouchState()
+    ├─ Install PostRender hook (via CydiaSubstrate or Dobby)
+    ├─ Setup native touch handlers (iOS: method swizzling, Android: JNI)
+    └─ Initialize GUI state
+    │
+    ▼
+Hooks Active - Every Frame:
+    │
+    ├─ Native Touch Events
+    │   ├─ iOS: UITouch → TouchInputHandler → UpdateTouchState()
+    │   └─ Android: MotionEvent → JNI → UpdateTouchState()
+    │
+    └─ PostRender Hook
+        ├─ Call original UE4 PostRender()
+        ├─ Process touch input via Handle()
+        ├─ Render GUI elements
+        └─ Return to UE4
 ```
 
-### Implementation Example
+### Touch Input - Native Approach (Recommended)
 
-```cpp
-void AMyPlayerController::SetupInputComponent()
-{
-    Super::SetupInputComponent();
-    InputComponent->BindTouch(IE_Pressed, this, &AMyPlayerController::OnTouchPressed);
-}
+**Why Native APIs Instead of Hooking UE4 Touch Functions:**
+1. **More Reliable**: OS touch APIs are stable across UE4 versions
+2. **Earlier Access**: Get touch events before UE4 processes them
+3. **Simpler Implementation**: No need to find and hook multiple UE4 functions
+4. **Better Performance**: Direct access without UE4 processing overhead
 
-void AMyPlayerController::OnTouchPressed(ETouchIndex::Type FingerIndex, FVector Location)
-{
-    FVector2D screenPos = FVector2D(Location.X, Location.Y);
-    ZeroGUI::Input::UpdateTouchState((int)FingerIndex, screenPos, true);
+#### iOS Touch Handling
+
+```
+UIView Touch Events
+    │
+    ▼
+Method Swizzling
+(touchesBegan:, touchesMoved:, touchesEnded:)
+    │
+    ▼
+TouchInputHandler (Objective-C)
+    │
+    ├─ Extract CGPoint locations
+    ├─ Convert to screen coordinates
+    └─ Call ZeroGUI::Input::UpdateTouchState()
+    │
+    ▼
+ZeroGUI Touch State Updated
+```
+
+**Implementation:**
+```objc
+// Swizzle UIView's touch methods
+Method original = class_getInstanceMethod([UIView class], @selector(touchesBegan:withEvent:));
+Method custom = class_getInstanceMethod([TouchInputHandler class], @selector(touchesBegan:withEvent:));
+method_exchangeImplementations(original, custom);
+```
+
+#### Android Touch Handling
+
+```
+Android MotionEvent
+    │
+    ▼
+GameActivity.onTouchEvent() (Java)
+    │
+    ▼
+JNI Call: nativeTouchEvent()
+    │
+    ▼
+Native C++: Java_..._nativeTouchEvent()
+    │
+    ├─ Extract action, pointer index, x, y
+    └─ Call ZeroGUI::Input::UpdateTouchState()
+    │
+    ▼
+ZeroGUI Touch State Updated
+```
+
+**Implementation:**
+```java
+// In GameActivity.java
+@Override
+public boolean onTouchEvent(MotionEvent event) {
+    int action = event.getActionMasked();
+    int index = event.getActionIndex();
+    nativeTouchEvent(action, index, event.getX(index), event.getY(index));
+    return super.onTouchEvent(event);
 }
 ```
+
+### Alternative: Hooking UE4 Touch Functions
+
+For those who prefer to hook UE4's internal touch processing:
+
+```
+UE4 Touch Input
+    │
+    ▼
+Platform-Specific Input Interface
+├─ iOS: FIOSInputInterface::HandleTouchEvent
+└─ Android: FAndroidInputInterface::TouchEvent
+    │
+    ▼
+Hook Intercepts Call
+    │
+    ├─ Extract touch parameters
+    ├─ Call ZeroGUI::Input::UpdateTouchState()
+    └─ Call original function
+```
+
+**Challenges:**
+- Symbol names vary by UE4 version
+- Function signatures may change
+- Multiple functions to hook (pressed, released, moved)
+- Requires finding correct symbols in target binary
 
 ## Menu Toggle Strategies
 
@@ -483,18 +626,33 @@ Some mobile ports simply map touch to mouse events. We chose a native touch appr
 
 ### Why Custom Hooking Instead of UE4 Delegates?
 
-UE4 provides delegates for rendering, but hooking offers:
+UE4 provides delegates for rendering, but we use hooking because:
 
-**Advantages:**
-- Works without access to game source code
-- Can be injected into existing games
-- No need to modify game's rendering pipeline
-- More flexible for mod/tool development
+**Runtime Injection Requirements:**
+- ✅ Works without access to game source code
+- ✅ Can be injected into shipped/production games
+- ✅ No need to modify game's build process
+- ✅ No need to recompile the target game
+- ✅ Perfect for modding and tool development
 
-**Disadvantages:**
-- Platform-specific (requires different libs per platform)
-- May break with UE4 updates (symbol changes)
-- More complex setup
+**UE4 Delegate Limitations for Runtime Injection:**
+- ❌ Requires access to UE4 classes at compile time
+- ❌ Requires modifying game code
+- ❌ Requires recompiling the game
+- ❌ Doesn't work with production binaries
+
+**Trade-offs:**
+- 👍 Advantages:
+  - No UE4 source/headers needed
+  - Works with any UE4 game (correct version)
+  - Can be injected after game is built
+  - Great for modding and reverse engineering
+  
+- 👎 Disadvantages:
+  - Platform-specific (different libs per platform)
+  - May break with UE4 updates (symbol changes)
+  - More complex setup
+  - Requires finding correct function addresses
 
 ## Testing Recommendations
 
