@@ -1,0 +1,57 @@
+# Build artifacts
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# Compiled binaries
+*.exe
+*.out
+*.app
+*.apk
+*.ipa
+
+# UE4 specific
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Mobile build artifacts
+android/build/
+android/.gradle/
+android/app/build/
+ios/build/
+*.xcworkspace/
+*.xcuserdata/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Third-party libraries (should be managed separately)
+ThirdParty/Dobby/
+ThirdParty/Substrate/
+
+# Temporary files
+/tmp/
+*.tmp
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db
