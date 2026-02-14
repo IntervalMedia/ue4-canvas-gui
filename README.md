@@ -1,6 +1,10 @@
 # ue4-canvas-gui
 
-## It's a simple Canvas GUI for Unreal Engine 4 with mouse operation.
+## A simple Canvas GUI for Unreal Engine 4 supporting both desktop (mouse/keyboard) and mobile (touch) platforms.
+
+### Platform Support
+- **Desktop:** Windows with mouse and keyboard input
+- **Mobile:** iOS and Android with touch input and gesture controls
 
 Included elements:<br>
 Rendering Text (left/center);<br>
@@ -19,6 +23,52 @@ Implemented a simple post-render system to draw on top of menu and all.<br>
  
 Ingame render
 ![EU4 GUI](screenshots/canvas4.jpg "")
+
+---
+
+## 🚀 NEW: Mobile Platform Support (iOS & Android)
+
+This GUI now supports mobile devices with touch input! See the dedicated mobile documentation:
+
+- **[Mobile Integration Guide](MOBILE_INTEGRATION.md)** - Complete guide for iOS and Android
+- **[Build Configuration Guide](BUILD_CONFIGURATION.md)** - Platform-specific build setup
+
+### Mobile Features:
+- ✅ Touch input support (up to 10 simultaneous touches)
+- ✅ Platform detection macros (iOS/Android)
+- ✅ Gesture-based menu controls (double-tap, swipe, etc.)
+- ✅ DPI-aware scaling for different screen sizes
+- ✅ Touch-friendly hit detection (20% larger hit areas)
+- ✅ PostRender hooking via CydiaSubstrate (iOS) and Dobby (Android)
+- ✅ Complete example implementation included
+
+### Quick Mobile Example:
+
+```cpp
+#include "PlatformDefines.h"
+#include "MobileHooks.h"
+#include "ZeroInputMobile.h"
+
+void InitializeGame()
+{
+    #if PLATFORM_MOBILE
+        MobileHooks::Initialize();  // Install PostRender hook
+    #endif
+}
+
+// Feed touch events from UE4
+void OnTouchPressed(ETouchIndex::Type FingerIndex, FVector Location)
+{
+    FVector2D screenPos = FVector2D(Location.X, Location.Y);
+    ZeroGUI::Input::UpdateTouchState((int)FingerIndex, screenPos, true);
+}
+```
+
+See `source/MobileMenuExample.cpp` for a complete working example.
+
+---
+
+## Desktop Usage
 
 ## Small "How to use" guide:<br>
 First you need get **UCanvas** from game.<br>
