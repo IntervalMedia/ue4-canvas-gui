@@ -30,6 +30,10 @@ struct FVector2D;
 
 namespace MobileMenu
 {
+    // Configuration constants
+    const float DOUBLE_TAP_WINDOW_SEC = 0.3f;  // Time window for double-tap detection
+    const float APPROX_FRAME_TIME_60FPS = 0.016f;  // Approximate frame time at 60 FPS
+    
     // Menu state
     static FVector2D menuPos = FVector2D(100.0f, 100.0f);
     static bool menuOpened = false;
@@ -55,7 +59,7 @@ namespace MobileMenu
         {
             float timeSinceLastTap = currentTime - lastTapTime;
             
-            if (timeSinceLastTap < 0.3f) // 300ms window for double-tap
+            if (timeSinceLastTap < DOUBLE_TAP_WINDOW_SEC)
             {
                 doubleTapCount++;
                 if (doubleTapCount >= 2)
@@ -129,7 +133,13 @@ namespace MobileMenu
                 {
                     ZeroGUI::Text("UE4 Mobile GUI", true, true);
                     ZeroGUI::Text("Version 1.0");
-                    ZeroGUI::Text("Platform: " PLATFORM_NAME);
+                    #if PLATFORM_IOS
+                        ZeroGUI::Text("Platform: iOS");
+                    #elif PLATFORM_ANDROID
+                        ZeroGUI::Text("Platform: Android");
+                    #else
+                        ZeroGUI::Text("Platform: Desktop");
+                    #endif
                 }
             }
             
@@ -155,7 +165,7 @@ void HookedPostRender(UGameViewportClient* viewport, UCanvas* canvas)
     
     // Get current time (simplified - actual implementation would use UE4's time system)
     static float currentTime = 0.0f;
-    currentTime += 0.016f; // Approximate 60 FPS
+    currentTime += APPROX_FRAME_TIME_60FPS;
     
     // Update and render our mobile menu
     MobileMenu::Tick(canvas, currentTime);

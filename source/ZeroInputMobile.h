@@ -10,7 +10,10 @@ namespace ZeroGUI
 	{
 		// Touch state tracking (support up to 10 simultaneous touch points)
 		bool touchDown[10];
-		bool touchDownAlready[256]; // Element ID tracking
+		// Element ID tracking - allows tracking state for up to 256 different UI elements
+		// This is separate from touch count as multiple elements may be interacted with
+		// across different touches/frames
+		bool touchDownAlready[256];
 		FVector2D touchPositions[10];
 		int activeTouchCount = 0;
 
