@@ -7,11 +7,60 @@ This guide covers the mobile port of UE4 Canvas GUI for Android and iOS platform
 The mobile port includes:
 - Touch-based input handling (supports up to 10 simultaneous touches)
 - Platform detection macros (iOS/Android)
-- CydiaSubstrate hooking for iOS
+- **Native iOS UIKit touch method hooking** (iOS) — no UE4 PlayerController wiring required
+- CydiaSubstrate hooking for iOS (PostRender + UIViewController touch methods)
 - Dobby hooking framework for Android
 - DPI-aware scaling for different screen sizes
 - Touch-friendly hit detection (20% larger hit areas)
 - Example implementation with gesture-based menu toggle
+
+## iOS Native Touch Input (Jailbreak)
+
+On jailbroken iOS devices the recommended approach is to intercept touch events
+directly at the **UIKit** level rather than through UE4's `InputComponent` bindings.
+This mirrors the technique used in the [Dear ImGui Apple Metal example](https://github.com/ocornut/imgui/blob/8957b3df03b4cbe502688208af7d2fda52be985f/examples/example_apple_metal/main.mm).
+
+`source/IOSNativeInput.mm` uses CydiaSubstrate's `MSHookMessageEx` to swizzle
+four Objective-C methods on `UIViewController`:
+
+| Hooked method | Trigger |
+|---|---|
+| `touchesBegan:withEvent:` | One or more fingers begin touching the screen |
+| `touchesMoved:withEvent:` | Any active finger moves |
+| `touchesCancelled:withEvent:` | Touch sequence is interrupted (e.g. phone call) |
+| `touchesEnded:withEvent:` | One or more fingers lift off the screen |
+
+Each hook calls `ZeroGUI_UpdateFromUIEvent()` which translates every `UITouch`
+in the event into a `ZeroGUI::Input::UpdateTouchState()` call, then chains to
+the original `UIViewController` implementation so the game receives its events
+normally.
+
+### Why native UIKit hooks?
+
+- **No UE4 modifications required** — works as a jailbreak tweak injected into
+  any UE4 game without recompilation.
+- **Lower latency** — events arrive before UE4's own input processing pipeline.
+- **Multi-touch out of the box** — all ten touch slots are populated directly
+  from the `UIEvent` touch set.
+- **Cancel handling** — `touchesCancelled:withEvent:` clears all slots to prevent
+  stuck touches when calls or notifications interrupt the session.
+
+### Activation
+
+Simply call `MobileHooks::Initialize()` once at startup.  It now automatically
+installs both the PostRender C++ hook and the UIViewController touch hooks:
+
+```cpp
+// Your tweak's constructor or +load method
+extern "C" void InitializeMobileGUI()
+{
+    MobileHooks::Initialize();  // installs PostRender hook + iOS touch hooks
+}
+```
+
+After this, `ZeroGUI::Input::UpdateTouchState()` is called automatically for
+every native iOS touch event — no `BindTouch` / `PlayerController` code is
+needed.
 
 ## File Structure
 
@@ -21,6 +70,8 @@ source/
 ├── ZeroInputMobile.h           # Touch input handling
 ├── PlatformAbstraction.h       # Platform-independent input abstraction
 ├── MobileHooks.h               # Hooking framework integration
+├── IOSNativeInput.h            # iOS native touch hook – C++ interface
+├── IOSNativeInput.mm           # iOS native touch hook – Objective-C++ implementation
 ├── MobileMenuExample.cpp       # Complete example implementation
 ├── ZeroGUI.h                   # Main GUI framework (desktop)
 └── ZeroInput.h                 # Mouse/keyboard input (desktop)
@@ -62,7 +113,16 @@ void InitializeGame()
 
 ### 2. Feeding Touch Input to the System
 
-In your UE4 PlayerController class:
+#### iOS (Jailbreak — recommended)
+
+On jailbroken iOS devices `MobileHooks::Initialize()` installs native UIKit
+hooks via `IOSNativeInput::InstallTouchHooks()`.  Touch data flows into
+`ZeroGUI::Input` automatically — **no PlayerController wiring is needed**.
+
+#### iOS / Android (UE4 PlayerController)
+
+If you prefer to receive touch events through UE4's own input system (or for
+non-jailbroken builds), bind them in your PlayerController class:
 
 ```cpp
 void AYourPlayerController::SetupInputComponent()
@@ -151,7 +211,11 @@ void PostRenderHook(UGameViewportClient* viewport, UCanvas* canvas)
    - Add `substrate.h` to your include path
    - Link against `libsubstrate.dylib`
 
-2. **Project Settings**
+2. **Add `IOSNativeInput.mm` to your build**
+   - Include `source/IOSNativeInput.mm` and `source/IOSNativeInput.h` in your project
+   - The file must be compiled as Objective-C++ (`.mm` extension is sufficient in Xcode)
+
+3. **Project Settings**
    ```bash
    # In your UE4 project's Build.cs
    if (Target.Platform == UnrealTargetPlatform.IOS)
@@ -161,7 +225,7 @@ void PostRenderHook(UGameViewportClient* viewport, UCanvas* canvas)
    }
    ```
 
-3. **Code Signing**
+4. **Code Signing**
    - Ensure your app is properly code-signed
    - Substrate hooks require proper entitlements
 
@@ -268,7 +332,8 @@ bool isHovered = ZeroGUI::Platform::MouseInZone(buttonPos, buttonSize);
 - Use `adb logcat` to check for errors
 
 ### Issue: Touch input not responding
-- Verify touch events are being fed to `UpdateTouchState()`
+- On iOS, verify `IOSNativeInput::InstallTouchHooks()` completed (call `MobileHooks::Initialize()`)
+- On iOS, `UpdateTouchState()` is now called automatically by the native UIKit hook — no PlayerController `BindTouch` wiring is needed
 - Check that `ZeroGUI::Input::Handle()` is called each frame
 - Ensure canvas is properly set up with `SetupCanvas()`
 

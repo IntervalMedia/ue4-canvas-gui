@@ -6,6 +6,9 @@
 // Android: Dobby/Substrate-compatible framework
 
 #if PLATFORM_IOS
+    // iOS native touch input via UIViewController method hooks
+    #include "IOSNativeInput.h"
+
     // iOS Hooking with CydiaSubstrate
     #include <substrate.h>
     
@@ -106,6 +109,14 @@ namespace MobileHooks
         if (!isInitialized)
         {
             InstallPostRenderHook();
+
+#if PLATFORM_IOS
+            // Hook native UIViewController touch methods so that all touch
+            // events are captured directly from UIKit without requiring UE4
+            // PlayerController InputComponent bindings.
+            IOSNativeInput::InstallTouchHooks();
+#endif
+
             isInitialized = true;
         }
     }
